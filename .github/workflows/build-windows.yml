@@ -1,0 +1,58 @@
+name: Build VST3 + instalador (Windows)
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -B build -A x64
+
+      - name: Build
+        run: cmake --build build --config Release --target AIStemSplitter_VST3 --parallel
+
+      - name: Collect VST3
+        shell: pwsh
+        run: |
+          $vst3 = Get-ChildItem -Path build -Recurse -Directory -Filter "*.vst3" | Select-Object -First 1
+          if (-not $vst3) { throw "No se genero el .vst3" }
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item -Recurse -Force $vst3.FullName "dist\AI Stem Splitter by Oliver Tkach.vst3"
+          Get-ChildItem dist -Recurse | Select-Object -First 20 FullName
+
+      - name: Download redistributables (Python + VC++ Runtime)
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path installer\redist | Out-Null
+          $ProgressPreference = 'SilentlyContinue'
+          Invoke-WebRequest "https://www.python.org/ftp/python/3.12.10/python-3.12.10-amd64.exe" -OutFile installer\redist\python-installer.exe
+          Invoke-WebRequest "https://aka.ms/vs/17/release/vc_redist.x64.exe" -OutFile installer\redist\vc_redist.x64.exe
+          Get-ChildItem installer\redist | Select-Object Name, Length
+
+      - name: Build installer (Inno Setup)
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup -y --no-progress
+            $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          }
+          & $iscc "installer\AIStemSplitter.iss"
+          if ($LASTEXITCODE -ne 0) { throw "ISCC fallo ($LASTEXITCODE)" }
+          Get-ChildItem installer\Output
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AIStemSplitter-Setup
+          path: installer/Output/*.exe
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AI-Stem-Splitter-VST3-Windows
+          path: dist/
